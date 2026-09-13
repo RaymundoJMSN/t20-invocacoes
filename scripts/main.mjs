@@ -1,7 +1,7 @@
 // t20-invocacoes — magias de invocação automatizadas (Tormenta20, Foundry v13).
 // Fluxo: card da magia no chat → lê aprimoramentos → jogador clica os lugares →
 // GM (via socket) cria os tokens já ajustados e dá posse ao conjurador.
-import { espiritoBalistico } from "./regras.mjs";
+import { espiritoBalistico, circuloPorNivel } from "./regras.mjs";
 
 const ID = "t20-invocacoes";
 const SOCKET = `module.${ID}`;
@@ -10,14 +10,16 @@ const SOCKET = `module.${ID}`;
 const INVOCACOES = {
   "Espírito Balístico": async ({ msg, actor, casterToken }) => {
     const aprs = msg.flags.tormenta20.onUseEffects ?? [];
-    // ponytail: círculo máximo ≈ maior círculo entre as magias da ficha
-    const circuloMax = Math.max(1, ...actor.itemTypes.magia.map((m) => Number(m.system.circulo) || 1));
+    // ponytail: círculo máximo ≈ maior entre (círculo pelo nível, conjurador completo) e (maior magia da ficha)
+    const circuloMax = Math.max(circuloPorNivel(actor.system.attributes.nivel?.value),
+      ...actor.itemTypes.magia.map((m) => Number(m.system.circulo) || 1));
     let tipoElemental = "";
     if (aprs.some((e) => (e.description ?? "").startsWith("(Apenas Golem"))) {
       tipoElemental = await escolherTipoDano();
       if (!tipoElemental) return;
     }
     const r = espiritoBalistico(aprs, { circuloMax, tipoElemental });
+    console.log(`${ID} | aprimoramentos`, aprs, "→", r, "círculo máx", circuloMax);
     const posicoes = await escolherPosicoes(r.quantidade, casterToken, 9, "Espírito");
     if (!posicoes.length) return;
     animar(posicoes);
