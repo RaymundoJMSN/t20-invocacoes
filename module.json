@@ -1,0 +1,17 @@
+{
+  "id": "t20-invocacoes",
+  "title": "Invocações — Tormenta20",
+  "description": "Magias de invocação automatizadas: usou a magia com os aprimoramentos, clica no mapa e a criatura aparece pronta (dono = quem conjurou, dano/Defesa já ajustados). Hoje: Espírito Balístico.",
+  "version": "0.1.0",
+  "compatibility": { "minimum": "13", "verified": "13" },
+  "relationships": {
+    "requires": [
+      { "id": "tormenta20", "type": "system", "compatibility": { "minimum": "1.5.0" } },
+      { "id": "sequencer", "type": "module" }
+    ]
+  },
+  "socket": true,
+  "esmodules": ["scripts/main.mjs"],
+  "authors": [{ "name": "RaymundoJMSN" }],
+  "license": "MIT"
+}
