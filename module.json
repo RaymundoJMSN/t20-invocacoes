@@ -34,6 +34,6 @@
   ],
   "license": "MIT",
   "url": "https://github.com/RaymundoJMSN/t20-invocacoes",
-  "manifest": "https://raw.githubusercontent.com/RaymundoJMSN/t20-invocacoes/main/module.json",
-  "download": "https://github.com/RaymundoJMSN/t20-invocacoes/archive/refs/heads/main.zip"
+  "manifest": "https://github.com/RaymundoJMSN/t20-invocacoes/releases/latest/download/module.json",
+  "download": "https://github.com/RaymundoJMSN/t20-invocacoes/releases/latest/download/module.zip"
 }
