@@ -108,7 +108,7 @@ async function escolherTipoDano() {
 }
 
 function animar(posicoes) {
-  const seq = new Sequence();
+  const seq = new Sequence().sound("Assets/Audio/FX_Holy_Magic_Impact_Small_02.ogg");
   for (const p of posicoes) {
     const c = canvas.grid.getCenterPoint(p);
     seq.effect("jb2a.explosion.07.purplepink").atLocation(c).scale(0.2)
