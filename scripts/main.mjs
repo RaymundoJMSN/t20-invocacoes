@@ -1,7 +1,7 @@
 // t20-invocacoes — magias de invocação automatizadas (Tormenta20, Foundry v13).
 // Fluxo: card da magia no chat → lê aprimoramentos → jogador clica os lugares →
 // GM (via socket) cria os tokens já ajustados e dá posse ao conjurador.
-import { espiritoBalistico, circuloPorNivel } from "./regras.mjs";
+import { espiritoBalistico, circuloPorNivel, formulaDoRoll } from "./regras.mjs";
 
 const ID = "t20-invocacoes";
 const SOCKET = `module.${ID}`;
@@ -19,7 +19,11 @@ const INVOCACOES = {
       if (!tipoElemental) return;
     }
     const r = espiritoBalistico(aprs, { circuloMax, tipoElemental });
-    console.log(`${ID} | aprimoramentos`, aprs, "→", r, "círculo máx", circuloMax);
+    // A rolagem de dano do card já traz tudo que o conjurador soma (Arcano de Batalha,
+    // modificadores.dano.mag, aprimoramentos) → o projétil herda essa fórmula.
+    const rolada = msg.rolls.find((x) => x.options?.type === "damage");
+    const formula = (rolada && formulaDoRoll(rolada.terms)) ?? r.formula;
+    console.log(`${ID} | aprimoramentos`, aprs, "→", r, "fórmula do card:", rolada?.formula, "→", formula);
     const posicoes = await escolherPosicoes(r.quantidade, casterToken, 9, "Espírito");
     if (!posicoes.length) return;
     animar(posicoes);
@@ -28,7 +32,7 @@ const INVOCACOES = {
       posicoes,
       disposition: casterToken?.document.disposition ?? CONST.TOKEN_DISPOSITIONS.FRIENDLY,
       atualizarAtor: { "system.attributes.defesa.base": actor.system.attributes.defesa.value },
-      dano: { formula: r.formula, tipo: r.tipo },
+      dano: { formula, tipo: r.tipo },
     };
   },
 };
