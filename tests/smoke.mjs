@@ -1,18 +1,53 @@
 // Smoke do fluxo inteiro com o Foundry fingido: card da magia no chat → escolhas → ficha → ator
-// criado a partir do molde REAL do compêndio "convocacoes" (tests/moldes-convocacoes.json, extraído
-// do pack do sistema) com o mergeObject de verdade do Foundry. node tests/smoke.mjs
+// criado a partir do molde REAL do compêndio "convocacoes" e itens REAIS do pack "parceiros"
+// (tests/*.json, extraídos dos packs do sistema, sem textos) com o mergeObject de verdade do Foundry.
+//   node tests/smoke.mjs
 import fs from "node:fs";
 import { mergeObject } from "file:///X:/FoundryVTT/Code/resources/app/common/utils/helpers.mjs";
 
-const moldes = JSON.parse(fs.readFileSync(new URL("./moldes-convocacoes.json", import.meta.url), "utf8"));
-const ok = (c, m) => { if (!c) { console.error(`FALHOU: ${m}`); process.exit(1); } };
+const ler = (f) => JSON.parse(fs.readFileSync(new URL(f, import.meta.url), "utf8"));
+const moldes = ler("./moldes-convocacoes.json"), parceiros = ler("./parceiros.json");
+let checagens = 0;
+const ok = (c, m) => { checagens++; if (!c) { console.error(`FALHOU: ${m}`); process.exit(1); } };
 const hooks = {};
 const lista = (arr) => Object.assign(arr, { getName: (n) => arr.find((x) => x.name === n) });
+let seq = 0;
+
+/** Documento embutido fingido (item/efeito) com getFlag, uuid e delete. */
+function embutido(dados, dono, colecao) {
+  const d = Object.assign(structuredClone(dados), { id: `e${++seq}` });
+  d.uuid = `${dono.uuid}.X.${d.id}`;
+  d.getFlag = (escopo, k) => d.flags?.[escopo]?.[k];
+  d.delete = async () => { const i = dono[colecao].indexOf(d); if (i >= 0) dono[colecao].splice(i, 1); };
+  return d;
+}
+/** Mistura pra ficha: itens e efeitos embutidos. */
+function comEmbutidos(alvo) {
+  alvo.items = Object.assign(alvo.items ?? [], { get: alvo.items?.get });
+  alvo.effects ??= [];
+  alvo.createEmbeddedDocuments = async (tipo, dados) => {
+    const col = tipo === "Item" ? "items" : "effects";
+    const novos = dados.map((x) => embutido(x, alvo, col));
+    alvo[col].push(...novos);
+    // legado do sistema: efeito "transfer" do item vai pra ficha com origin = item
+    if (tipo === "Item") for (const it of novos) for (const ef of it.effects ?? []) if (ef.transfer) alvo.effects.push(embutido({ ...ef, origin: it.uuid }, alvo, "effects"));
+    return novos;
+  };
+  alvo.deleteEmbeddedDocuments = async (tipo, ids) => {
+    const col = tipo === "Item" ? "items" : "effects";
+    for (const id of ids) { const i = alvo[col].findIndex((x) => x.id === id); if (i >= 0) alvo[col].splice(i, 1); }
+  };
+  return alvo;
+}
 
 // ── ator fingido: guarda os dados e "calcula" Defesa e Reflexos do jeito do sistema (base + algo) ──
 const atores = lista([]);
 class AtorFalso {
-  constructor(dados) { Object.assign(this, structuredClone(dados)); this.id = `a${atores.length}`; this.recalcular(); }
+  constructor(dados) {
+    Object.assign(this, structuredClone(dados)); this.id = `a${atores.length}`; this.uuid = `Actor.${this.id}`;
+    for (const it of this.items ?? []) it.getFlag = (escopo, k) => it.flags?.[escopo]?.[k];
+    this.recalcular();
+  }
   recalcular() {   // o sistema soma coisas que a gente não controla: simula +3 na Defesa e +1 no Reflexos
     this.system.attributes.defesa.value = Number(this.system.attributes.defesa.base) + 3;
     this.system.pericias.refl.value = Number(this.system.pericias.refl.outros) + 1;
@@ -26,41 +61,53 @@ class AtorFalso {
   async getTokenDocument(p) { return { toObject: () => ({ ...this.prototypeToken, ...p, actorId: this.id }) }; }
 }
 
-const cena = { id: "c1", tokens: [], async deleteEmbeddedDocuments(_t, ids) { this.tokens = this.tokens.filter((t) => !ids.includes(t.id)); },
+const cena = { id: "c1", tokens: Object.assign([], { contents: [] }),
+  async deleteEmbeddedDocuments(_t, ids) { for (let i = this.tokens.length - 1; i >= 0; i--) if (ids.includes(this.tokens[i].id)) this.tokens.splice(i, 1); },
   async createEmbeddedDocuments(_t, dados) { dados.forEach((d, i) => this.tokens.push({ ...d, id: `t${this.tokens.length + i}` })); } };
 let escolha = null, cliques = 0;
+const mensagens = [];
 
+const pacote = (fonte) => ({
+  getDocuments: async ({ name }) => (fonte[name] ? [{ toObject: () => structuredClone(fonte[name]) }] : []),
+  index: Object.keys(fonte).map((name) => ({ name })),
+});
 Object.assign(globalThis, {
   Hooks: { on: (n, f) => (hooks[n] ??= []).push(f), once: (n, f) => (hooks[n] ??= []).push(f) },
-  CONST: { DOCUMENT_OWNERSHIP_LEVELS: { LIMITED: 1, OWNER: 3 }, TOKEN_DISPOSITIONS: { FRIENDLY: 1 }, TOKEN_DISPLAY_MODES: { OWNER_HOVER: 20 } },
+  CONST: { DOCUMENT_OWNERSHIP_LEVELS: { NONE: 0, LIMITED: 1, OWNER: 3 }, TOKEN_DISPOSITIONS: { FRIENDLY: 1 }, TOKEN_DISPLAY_MODES: { OWNER_HOVER: 20 } },
   CONFIG: { T20: { damageTypes: { dano: "x", perda: "x", corte: "corte", impacto: "impacto", perfuracao: "perfuração", fogo: "fogo", frio: "frio", trevas: "trevas", acido: "ácido", eletricidade: "eletricidade" } } },
   foundry: { utils: { mergeObject, deepClone: structuredClone }, applications: { api: { DialogV2: { prompt: async () => escolha } } } },
   Actor: { create: async (d) => { const a = new AtorFalso(d); atores.push(a); return a; } },
   Folder: { create: async (d) => ({ id: "pasta", ...d, getFlag: () => true }) },
   Sequencer: { Crosshair: { show: async () => ({ x: 100 * ++cliques, y: 50 }) } },
   Sequence: class { sound() { return this; } effect() { return this; } atLocation() { return this; } scale() { return this; } play() {} },
-  canvas: { scene: { id: "c1" }, tokens: { get: () => null }, grid: { getTopLeftPoint: (p) => p, getCenterPoint: (p) => p } },
+  canvas: { scene: { id: "c1" }, tokens: { get: () => null, placeables: [] }, grid: { getTopLeftPoint: (p) => p, getCenterPoint: (p) => p } },
+  ui: { notifications: { info: () => {}, warn: (m) => console.warn("aviso:", m), error: (m) => console.warn("erro:", m) } },
 });
+const conjurador = comEmbutidos({
+  id: "bruxa", uuid: "Actor.bruxa", name: "Bruxa", type: "character", getActiveTokens: () => [], getFlag: () => undefined,
+  system: { attributes: { nivel: { value: 8 }, conjuracao: "int" }, atributos: { int: { value: 4 } }, pericias: { refl: { value: 7 } } },
+  items: Object.assign([], { get: (id) => ({ name: id, system: { resistencia: {} } }) }),
+});
+// o token que a Legião domina
+const orc = comEmbutidos({ id: "orc", uuid: "Actor.orc", name: "Orc", ownership: { default: 0 }, rollPericia: async () => ({ rolls: [{ total: 30 }] }) });
+const tokenOrc = { name: "Orc", actorLink: false, actor: orc, uuid: "Scene.c1.Token.orc", atualizacoes: [], async update(u) { this.atualizacoes.push(u); } };
+cena.tokens.contents = [tokenOrc];
+
 globalThis.game = {
-  user: { id: "u1" }, actors: atores, scenes: Object.assign([cena], { get: () => cena }),
+  user: { id: "u1", isGM: true, targets: new Set() }, scenes: Object.assign([cena], { get: () => cena, contents: [cena] }),
+  // as invocações (atores) + as fichas de jogador que recebem parceiro
+  actors: { filter: (f) => [...atores, conjurador].filter(f), find: (f) => [...atores, conjurador].find(f), [Symbol.iterator]: () => [...atores, conjurador][Symbol.iterator]() },
   folders: { find: () => null }, i18n: { localize: (s) => s },
-  packs: { get: () => ({ getDocuments: async ({ name }) => (moldes[name] ? [{ toObject: () => structuredClone(moldes[name]) }] : []) }) },
-  socket: { on() {}, emit() {} },
+  packs: { get: (id) => (id === "tormenta20.parceiros" ? pacote(parceiros) : pacote(moldes)) },
+  socket: { on() {}, emit() {} }, settings: { get: () => "default" },
 };
 game.users = { activeGM: game.user };
-game.user.isGM = true;
-
-const conjurador = {
-  id: "bruxa", name: "Bruxa", type: "character", getActiveTokens: () => [],
-  system: { attributes: { nivel: { value: 8 }, conjuracao: "int" }, atributos: { int: { value: 4 } }, pericias: { refl: { value: 7 } } },
-};
-const magia = (name) => ({ name, system: { resistencia: {} } });
-conjurador.items = { get: (id) => magia(id) };
-globalThis.ChatMessage = { getSpeakerActor: () => conjurador };
+globalThis.fromUuid = async (u) => ({ "Actor.bruxa": conjurador, "Scene.c1.Token.orc": tokenOrc }[u] ?? null);
+globalThis.ChatMessage = { getSpeakerActor: () => conjurador, create: async (d) => mensagens.push(d) };
 
 await import("../scripts/main.mjs");
-const lancar = (nome, aprs) => Promise.all(hooks.createChatMessage.map((f) => f({
-  flags: { tormenta20: { itemData: {}, onUseEffects: aprs } }, content: `<div data-item-id="${nome}">`, speaker: {}, rolls: [],
+const lancar = (nome, aprs, extra = {}) => Promise.all(hooks.createChatMessage.map((f) => f({
+  flags: { tormenta20: { itemData: {}, onUseEffects: aprs } }, content: `<div data-item-id="${nome}">`, speaker: {}, rolls: [], ...extra,
 }, {}, "u1")));
 const e = (description, qty = 1) => ({ description, qty });
 
@@ -102,9 +149,60 @@ ok(JSON.stringify(sombra.items[0].system.rolls[0].parts) === '[["1d10","trevas",
 ok(sombra.system.tracos.ic.value.includes("paralisado") && sombra.system.tracos.ic.custom.includes("incorpóreo"), "imunidades do molde + incorpóreo");
 ok(atores.length === 2, "monstro e sombras convivem (magias diferentes)");
 
-// ── 0 PV some do mapa ──
+// ── Enxame de Pestes de criaturas maiores ──
+escolha = { tipo: "impacto" };
+await lancar("Enxame de Pestes", [e("muda a resistência para Reflexos reduz à metade e o enxame para criaturas maiores, como gatos"), e("aumenta o dano em +1d12.")]);
+const enx = atores.find((x) => x.name.startsWith("Enxame"));
+ok(enx && enx.system.attributes.pv.max === 0 && enx.system.attributes.movement.walk === 12, "enxame sem PV, desloca 12m");
+ok(JSON.stringify(enx.items[0].system.rolls[0].parts) === '[["4d12","impacto",""]]' && enx.items[0].system.resistencia.txt.startsWith("Reflexos"), "4d12 de impacto, Reflexos");
+
+// ── 0 PV some do mapa; enxame (sem PV) não ──
 let apagado = false;
-hooks.updateActor[0]({ isToken: true, getFlag: () => "x", system: { attributes: { pv: { value: 0 } } }, token: { delete: () => (apagado = true) } });
+const mexe = (max) => hooks.updateActor[0]({ isToken: true, getFlag: () => "x", system: { attributes: { pv: { value: 0, max } } }, token: { delete: () => (apagado = true) } });
+mexe(0);
+ok(!apagado, "enxame sem PV fica no mapa");
+mexe(1);
 ok(apagado, "criatura conjurada a 0 PV some");
 
-console.log("smoke OK (25 checagens)");
+// ── Montaria Arcana: parceiro só com o nível veterano, chave do Cavalo consertada ──
+await lancar("Montaria Arcana", []);
+let mont = conjurador.items.find((i) => i.name === "Montaria Arcana");
+ok(mont && mont.effects.every((ef) => /veterano/i.test(ef.name)), "só efeitos do nível veterano");
+ok(mont.effects.length >= 1 && mont.system.description.value.includes("Parceiro Veterano"), "nível na descrição");
+await lancar("Montaria Arcana", [e("muda o nível do aliado para mestre. Requer 3º círculo.")]);
+const montarias = conjurador.items.filter((i) => i.name === "Montaria Arcana");
+ok(montarias.length === 1 && montarias[0].effects.every((ef) => /mestre/i.test(ef.name)), "reconjurar troca pelo mestre");
+ok(montarias[0].effects.every((ef) => ef.changes.every((c) => !/\s|attibutes/.test(c.key))), "chaves consertadas");
+
+// ── Conjurar Elemental do fogo como fortão: destruidor + fortão, os dois mestres ──
+escolha = { elemento: "fogo", x1: "fortao" };
+await lancar("Conjurar Elemental", []);
+const elem = conjurador.items.filter((i) => i.name.startsWith("Elemental do Fogo"));
+ok(elem.map((i) => i.name).sort().join() === "Elemental do Fogo: Destruidor,Elemental do Fogo: Fortão", "destruidor + fortão");
+ok(elem.find((i) => i.name.endsWith("Fortão")).effects.every((ef) => /mestre/i.test(ef.name)), "fortão mestre");
+const fortaoTransferidos = conjurador.effects.filter((ef) => ef.origin === elem.find((i) => i.name.endsWith("Fortão")).uuid);
+escolha = { elemento: "terra", x1: "guardiao" };
+await lancar("Conjurar Elemental", []);
+ok(!conjurador.items.some((i) => i.name.startsWith("Elemental do Fogo")) && conjurador.items.some((i) => i.name === "Elemental da Terra: Guardião"), "elemental novo substitui o antigo");
+ok(fortaoTransferidos.every((ef) => !conjurador.effects.includes(ef)), "efeitos passados pra ficha somem junto");
+escolha = { elemento: "fogo", x1: "guardiao" };
+await lancar("Conjurar Elemental", []);
+ok(conjurador.items.some((i) => i.name === "Elemental da Terra: Guardião"), "tipo fora do elemento é recusado (nada muda)");
+
+// ── Servos Invisíveis: 4 bônus de +2 que somem ao serem usados ──
+await lancar("Servos Invisíveis", [e("aumenta o número de servos conjurados em 1.")]);
+const servos = () => conjurador.effects.filter((ef) => ef.getFlag("t20-invocacoes", "servo"));
+ok(servos().length === 4 && servos().every((s) => s.disabled && s.flags.tormenta20.skill), "4 servos desligados no diálogo de perícia");
+await lancar("teste de Atletismo", [e("Servo Invisível", 1)]);
+ok(servos().length === 3, "usar um servo gasta um");
+
+// ── Legião: domina o alvo, dá posse, e libera quando ele passa na Vontade ──
+game.user.targets = new Set([{ document: { uuid: "Scene.c1.Token.orc" } }]);
+await lancar("Legião", []);
+ok(orc.effects.some((ef) => ef.name === "Dominado (Legião)" && ef.getFlag("t20-invocacoes", "legiao").cd === 18), "orc dominado com a CD");
+ok(tokenOrc.atualizacoes.at(-1)?.delta?.ownership?.u1 === 3, "conjurador ganha posse do token");
+await hooks.combatTurnChange[0]({ combatants: { get: () => ({ token: tokenOrc }) } }, { combatantId: "x" });
+ok(!orc.effects.some((ef) => ef.name === "Dominado (Legião)") && orc.effects.some((ef) => ef.name === "Abalado"), "passou na Vontade: livre e abalado");
+ok(tokenOrc.atualizacoes.at(-1)?.delta?.ownership?.u1 === 0, "posse devolvida");
+
+console.log(`smoke OK (${checagens} checagens)`);

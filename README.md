@@ -24,7 +24,34 @@ Uma entrada por magia no registro `INVOCACOES` de `scripts/main.mjs`. Hoje:
   por criatura; esqueleto, carniçal (paralisia), sombra (incorpórea, perda de PM), soterrado e fúria
   de Tauron, com PV, dano, imunidades e a condição que o golpe aplica.
 
-As duas criam um ator na pasta **Invocações** a partir do molde do compêndio `tormenta20.convocacoes`
+- **Exército dos Mortos** (Dragão Brasil): como a de cima, mas capangas de 1 PV com Defesa (18 a 35),
+  mais guerreiro perpétuo e zumbi peçonha (que também valem na Conjurar Mortos-Vivos, Ameaças de Arton).
+- **Enxame de Pestes** e **Enxame Rubro (de Ichabod)**: enxame no mapa no tamanho certo (1,5m, 3m ou 6m),
+  com o dano no espaço (dados extras, variante maiores/elementais e tipo escolhido, trevas, voo 18m,
+  agarrar e parasitas no texto). Enxame não tem PV (a magia não dá).
+- **Animar Objetos**: escolhe tamanho e quantidade (até 8/8/4/2/1); cada objeto é um token com For,
+  Des e PV do tamanho e sem Defesa. O tipo de parceiro de cada um é a opção da própria magia no diálogo.
+
+Magias de **parceiro** não criam criatura com ficha — pela regra, parceiro não tem turno nem PV, só dá
+bônus. Nelas, quem recebe ganha o item do pack `tormenta20.parceiros` com **só os efeitos do nível** que
+a magia dá (e as chaves erradas dos packs consertadas, como a do Cavalo Iniciante):
+
+- **Aliado Animal**: veterano (mestre com +7 PM), um ou dois tipos diferentes; montaria escolhe o animal.
+- **Montaria Arcana**: cavalo veterano (mestre com +3 PM); medo, tamanho e permanência vão na descrição.
+- **Conjurar Elemental**: destruidor mestre (habilidade a 2 PM) + o(s) tipo(s) do elemento; com "um de
+  cada", cada elemental pode ir pra um aliado na cena.
+- **Servo Morto-Vivo**: esqueleto/zumbi iniciante, carniçal ou sombra veterano, múmia mestre. Cada servo
+  fica (não substitui o anterior).
+
+E duas que não são criatura nem parceiro:
+
+- **Servos Invisíveis**: cada servo vira um "+2" desmarcado no diálogo de teste de perícia; marcou e
+  rolou, aquele servo some.
+- **Legião**: marque os alvos (T) antes de lançar. Eles ganham "Dominado (Legião)", o conjurador
+  recebe a posse dos tokens e, no fim do turno de cada um em combate, o mestre rola Vontade contra a
+  CD; quem passa se livra, fica abalado por 1 rodada e a posse volta.
+
+As que criam criatura geram um ator na pasta **Invocações** a partir do molde do compêndio `tormenta20.convocacoes`
 (tipo `simple`, imagem) com a ficha inteira refeita pela regra — os atores do compêndio têm erros
 (Sombra com 1 PV, Carniçal com 1d6+3). Conjurar de novo some com a invocação anterior da mesma
 magia, e a criatura que chega a 0 PV some do mapa.

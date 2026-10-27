@@ -142,11 +142,143 @@ export const MORTOS_VIVOS = {
     texto: "Criaturas vivas atingidas ficam desprevenidas por 1 rodada e em chamas (Fortitude, CD da magia, evita)." },
 };
 
-export function conjurarMortosVivos(aprs = []) {
+// Variantes só de devotos (Ameaças de Arton), que valem pras duas magias.
+MORTOS_VIVOS.guerreiro = { nome: "Guerreiro Perpétuo", tamanho: "med", for: 5, des: 4, pv: 1, desl: { walk: 9 }, defesa: 33, incorporeo: true,
+  danos: [{ formula: "3d6", tipo: "impacto" }, { formula: "3d6", tipo: "impacto" }], texto: "Causa o dano duas vezes por ação." };
+MORTOS_VIVOS.zumbi = { nome: "Zumbi Peçonha", tamanho: "med", for: 3, des: 1, pv: 1, desl: { walk: 9 }, defesa: 25,
+  danos: [{ formula: "1d8+1", tipo: "trevas" }, { formula: "2d6", tipo: "perda" }], condicao: { nome: "Atordoado", status: "atordoado", rodadas: 1 },
+  texto: "Mais perda de 2d6 PV por veneno. O atingido fica atordoado por 1 rodada (uma vez por cena) e depois fraco; Fortitude (CD da magia) reduz para fraco por 1 rodada." };
+
+/** Exército dos Mortos (Dragão Brasil): capangas de 1 PV, mas com Defesa; sombra só de trevas. */
+export const EXERCITO = Object.fromEntries(Object.entries(MORTOS_VIVOS).map(([k, v]) => [k, { ...v, pv: 1,
+  defesa: { esqueleto: 18, carnical: 27, sombra: 35, soterrado: 18, furia: 18, guerreiro: 33, zumbi: 25 }[k] }]));
+EXERCITO.sombra = { ...EXERCITO.sombra, danos: [{ formula: "2d10", tipo: "trevas" }] };
+
+export function conjurarMortosVivos(aprs = [], tabela = MORTOS_VIVOS) {
   const tipo = vezes(aprs, "conjura sombras") ? "sombra" : vezes(aprs, "conjura carnicais") ? "carnical"
-    : vezes(aprs, "furias de tauron") ? "furia" : vezes(aprs, "conjura soterrados") ? "soterrado" : "esqueleto";
-  return { tipo, quantidade: 6 + vezes(aprs, "aumenta o numero de mortos-vivos"), ...MORTOS_VIVOS[tipo] };
+    : vezes(aprs, "furias de tauron") ? "furia" : vezes(aprs, "conjura soterrados") ? "soterrado"
+    : vezes(aprs, "guerreiros perpetuos") ? "guerreiro" : vezes(aprs, "zumbis peconha") ? "zumbi" : "esqueleto";
+  return { tipo, quantidade: 6 + vezes(aprs, "aumenta o numero de mortos-vivos"), ...tabela[tipo] };
 }
+
+// ─── Enxames ──────────────────────────────────────────────────────────────────
+export const TIPOS_FISICOS = ["corte", "impacto", "perfuracao"];
+export const TIPOS_ELEMENTAIS = ["acido", "eletricidade", "fogo", "frio"];
+
+/** Enxame de Pestes: 2d12 (maiores 3d12, elementais 5d12) + 1d12 por aprimoramento. */
+export function enxamePestes(aprs = [], escolha = {}) {
+  const elemental = vezes(aprs, "criaturas elementais") > 0;
+  const maiores = !elemental && vezes(aprs, "criaturas maiores") > 0;
+  const base = elemental ? 5 : maiores ? 3 : 2;
+  const permitidos = elemental ? TIPOS_ELEMENTAIS : maiores ? TIPOS_FISICOS : ["corte"];
+  return {
+    variante: elemental ? "elemental" : maiores ? "maiores" : "pestes", tamanho: "med", lado: 1,
+    quantidade: 1 + vezes(aprs, "aumenta o numero de enxames"),
+    formula: `${base + vezes(aprs, "aumenta o dano em +1d12")}d12`,
+    tipo: permitidos.includes(escolha.tipo) ? escolha.tipo : permitidos[0], escolhas: permitidos.length > 1 ? permitidos : null,
+    teste: elemental || maiores ? "Reflexos" : "Fortitude", desl: { walk: 12, fly: 0 },
+  };
+}
+
+/** Enxame Rubro de Ichabod: Grande (3m), 4d12 ácido; Enorme é quadrado de 6m. */
+export function enxameRubro(aprs = []) {
+  const enorme = vezes(aprs, "enxame vira enorme") > 0;
+  return {
+    tamanho: enorme ? "eno" : "gra", lado: enorme ? 4 : 2, quantidade: 1,
+    formula: `${4 + vezes(aprs, "aumenta o dano em +1d12")}d12`,
+    tipo: vezes(aprs, "muda o dano para trevas") ? "trevas" : "acido", teste: "Reflexos",
+    desl: { walk: 12, fly: vezes(aprs, "deslocamento de voo 18") ? 18 : 0 },
+    agarra: vezes(aprs, "fica agarrada") > 0, parasitas: vezes(aprs, "parasitas") > 0,
+  };
+}
+
+// ─── Animar Objetos ───────────────────────────────────────────────────────────
+export const OBJETOS = {
+  min: { nome: "Minúsculo", for: -3, des: 4, pv: 5, max: 8, parceiros: "Assassino ou Combatente Iniciante" },
+  peq: { nome: "Pequeno", for: -2, des: 2, pv: 10, max: 8, parceiros: "Combatente ou Guardião Iniciante" },
+  med: { nome: "Médio", for: 0, des: 1, pv: 20, max: 4, parceiros: "Combatente ou Guardião Veterano" },
+  gra: { nome: "Grande", for: 2, des: 0, pv: 40, max: 2, parceiros: "Fortão, Guardião ou Montaria (cavalo) Veterano" },
+  eno: { nome: "Enorme", for: 4, des: -2, pv: 60, max: 1, parceiros: "Fortão, Guardião ou Montaria (cavalo) Mestre" },
+};
+LADO_TOKEN.min = 0.5;
+
+export function animarObjetos(tamanho, quantidade) {
+  const o = OBJETOS[tamanho] ?? OBJETOS.med;
+  return { tamanho: OBJETOS[tamanho] ? tamanho : "med", ...o, quantidade: Math.max(1, Math.min(o.max, Number(quantidade) || o.max)) };
+}
+
+// ─── Parceiros (Aliado Animal, Montaria Arcana, Conjurar Elemental, Servo Morto-Vivo) ──
+/** Tipo de parceiro → item do pack tormenta20.parceiros. */
+export const ITEM_PARCEIRO = { ajudante: "Ajudante", assassino: "Assassino", atirador: "Atirador", combatente: "Combatente",
+  destruidor: "Destruidor", fortao: "Fortão", guardiao: "Guardião", medico: "Médico", montaria: "Montaria: Cavalo",
+  perseguidor: "Perseguidor", vigilante: "Vigilante" };
+export const NIVEIS = ["iniciante", "veterano", "mestre"];
+
+/** Efeitos do item de parceiro que valem pro nível: os do nível + os que não citam nível nenhum. */
+export function efeitosDoNivel(efeitos, nivel) {
+  return efeitos.filter((e) => {
+    const n = sem(e.name);
+    const cita = NIVEIS.filter((x) => n.includes(x));
+    return !cita.length || cita.includes(nivel);
+  });
+}
+
+/** Conserta chave de efeito digitada errada nos packs ("system. attributes", "attibutes", walk sem .base). */
+export function consertarChave(chave) {
+  let k = String(chave ?? "").replace(/\s+/g, "").replace("attibutes", "attributes");
+  if (/movement\.(walk|fly|swim|climb|burrow)$/.test(k)) k += ".base";
+  return k;
+}
+
+export function aliadoAnimal(aprs = []) {
+  return {
+    nivel: vezes(aprs, "muda o parceiro para mestre") ? "mestre" : "veterano",
+    quantidade: vezes(aprs, "2 animais prestativos") ? 2 : 1,
+    mensageiro: vezes(aprs, "animal minusculo") > 0,
+    tipos: ["ajudante", "combatente", "fortao", "guardiao", "montaria", "perseguidor"],
+  };
+}
+
+export function montariaArcana(aprs = []) {
+  return {
+    nivel: vezes(aprs, "para mestre") ? "mestre" : "veterano",
+    permanente: vezes(aprs, "duracao para permanente") > 0,
+    categoriasExtras: vezes(aprs, "aumenta o tamanho da montaria"),
+    medo: vezes(aprs, "criaturas do tipo animal") > 0,
+  };
+}
+
+export const ELEMENTOS = {
+  ar: { nome: "Ar", de: "do Ar", dano: "eletricidade", tipos: ["assassino", "perseguidor", "vigilante"] },
+  agua: { nome: "Água", de: "da Água", dano: "frio", tipos: ["ajudante", "guardiao", "medico"] },
+  fogo: { nome: "Fogo", de: "do Fogo", dano: "fogo", tipos: ["atirador", "combatente", "fortao"] },
+  terra: { nome: "Terra", de: "da Terra", dano: "impacto", tipos: ["combatente", "guardiao", "montaria"] },
+};
+
+export function conjurarElemental(aprs = []) {
+  const enorme = vezes(aprs, "muda para enorme") > 0;
+  return { nivel: "mestre", tamanho: enorme ? "eno" : "gra", tiposPorElemental: enorme ? 2 : 1, todos: vezes(aprs, "um elemental de cada tipo") > 0 };
+}
+
+export const SERVOS = {
+  esqueleto: { nome: "Esqueleto ou Zumbi", nivel: "iniciante", tipos: ["ajudante", "atirador", "combatente", "fortao", "guardiao", "montaria"] },
+  carnical: { nome: "Carniçal", nivel: "veterano", tipos: ["ajudante", "atirador", "combatente", "fortao", "guardiao"] },
+  sombra: { nome: "Sombra", nivel: "veterano", tipos: ["assassino", "combatente", "perseguidor"] },
+  mumia: { nome: "Múmia", nivel: "mestre", tipos: ["ajudante", "destruidor", "guardiao", "medico"] },
+};
+
+export function servoMortoVivo(aprs = []) {
+  const criatura = vezes(aprs, "cria uma mumia") ? "mumia" : vezes(aprs, "cria uma sombra") ? "sombra"
+    : vezes(aprs, "cria um carnical") ? "carnical" : "esqueleto";
+  return { criatura, ...SERVOS[criatura] };
+}
+
+// ─── Servos Invisíveis e Legião ───────────────────────────────────────────────
+export const servosInvisiveis = (aprs = []) => ({
+  quantidade: 3 + vezes(aprs, "aumenta o numero de servos"), tarefa: vezes(aprs, "realizar uma unica tarefa") > 0,
+});
+
+export const legiao = (aprs = []) => ({ alvos: 10 + vezes(aprs, "aumenta o numero de alvos") });
 
 if (typeof process !== "undefined" && process.argv?.[1]?.endsWith("regras.mjs") && process.argv.includes("--check")) {
   const assert = (c, m) => { if (!c) { console.error("FALHOU:", m); process.exit(1); } };
@@ -203,5 +335,43 @@ if (typeof process !== "undefined" && process.argv?.[1]?.endsWith("regras.mjs") 
   mv = conjurarMortosVivos([e("em vez de esqueletos, conjura sombras. Requer 4º círculo.")]);
   assert(mv.tipo === "sombra" && mv.pv === 30 && mv.incorporeo && mv.danos.map((d) => d.tipo).join() === "trevas,frio", "sombra (livro: 30 PV, trevas + frio)");
   assert(conjurarMortosVivos([e("Em vez de esqueletos, conjura fúrias de Tauron.")]).defesa === 18, "fúria de Tauron (AdA)");
-  console.log("regras.mjs: 27 casos OK");
+  mv = conjurarMortosVivos([e("em vez de esqueletos, conjura guerreiros perpétuos")]);
+  assert(mv.tipo === "guerreiro" && mv.defesa === 33 && mv.danos.length === 2, "guerreiro perpétuo (AdA): dano duas vezes");
+  mv = conjurarMortosVivos([e("em vez de esqueletos, conjura sombras.")], EXERCITO);
+  assert(mv.pv === 1 && mv.defesa === 35 && mv.danos.length === 1 && mv.danos[0].formula === "2d10", "Exército dos Mortos: sombra capanga");
+  assert(conjurarMortosVivos([], EXERCITO).defesa === 18, "Exército: esqueleto com Defesa 18");
+
+  // Enxames
+  let x = enxamePestes([e("aumenta o dano em +1d12.", 2)]);
+  assert(x.formula === "4d12" && x.tipo === "corte" && x.teste === "Fortitude" && x.quantidade === 1 && !x.escolhas, "pestes 2d12 +2");
+  x = enxamePestes([e("muda a resistência para Reflexos reduz à metade e o enxame para criaturas maiores, como gatos"), e("aumenta o número de enxames em +1.", 2)], { tipo: "impacto" });
+  assert(x.formula === "3d12" && x.tipo === "impacto" && x.teste === "Reflexos" && x.quantidade === 3, "maiores 3d12, 3 enxames");
+  x = enxamePestes([e("muda a resistência para Reflexos reduz à metade e o enxame para criaturas elementais.")], { tipo: "corte" });
+  assert(x.formula === "5d12" && x.tipo === "acido" && x.escolhas.length === 4, "elemental 5d12 não aceita corte");
+  x = enxameRubro([e("o enxame vira Enorme (quadrado de 6m de lado)."), e("muda o dano para trevas."), e("o enxame ganha deslocamento de voo 18m")]);
+  assert(x.tamanho === "eno" && x.lado === 4 && x.tipo === "trevas" && x.desl.fly === 18 && x.formula === "4d12", "rubro enorme de trevas voando");
+
+  // Animar Objetos
+  let o = animarObjetos("gra", 5);
+  assert(o.quantidade === 2 && o.for === 2 && o.pv === 40, "até 2 Grandes");
+  assert(animarObjetos("min").quantidade === 8 && LADO_TOKEN.min === 0.5, "8 minúsculos de meio quadrado");
+
+  // Parceiros
+  const efs = ["Combatente Iniciante", "Combatente Veterano", "Combatente Mestre", "Combatente Mestre: Ataque extra", "Ajudante"].map((name) => ({ name }));
+  assert(efeitosDoNivel(efs, "mestre").map((x) => x.name).join() === "Combatente Mestre,Combatente Mestre: Ataque extra,Ajudante", "efeitos do nível + genéricos");
+  assert(efeitosDoNivel([{ name: "Gorlogg iniciante: +1d6" }], "veterano").length === 0, "nível em minúscula também conta");
+  assert(consertarChave("system. attributes.movement.walk") === "system.attributes.movement.walk.base", "chave do Cavalo Iniciante");
+  assert(consertarChave("system.attibutes.movement.walk") === "system.attributes.movement.walk.base", "attibutes");
+  assert(consertarChave("system.attributes.defesa.bonus") === "system.attributes.defesa.bonus", "chave boa fica");
+  let pa = aliadoAnimal([e("muda o parceiro para mestre. Requer 3º círculo."), e("muda o alvo para 2 animais prestativos. Cada animal")]);
+  assert(pa.nivel === "mestre" && pa.quantidade === 2 && !pa.mensageiro, "aliado animal mestre ×2");
+  assert(aliadoAnimal([]).nivel === "veterano", "aliado animal veterano");
+  assert(montariaArcana([e("muda o nível do aliado para mestre. Requer 3º círculo.")]).nivel === "mestre", "montaria mestre");
+  let ce = conjurarElemental([e("o elemental muda para Enorme e recebe dois tipos de aliado indicados no seu elemento.")]);
+  assert(ce.tamanho === "eno" && ce.tiposPorElemental === 2 && !ce.todos, "elemental enorme com 2 tipos");
+  assert(servoMortoVivo([e("muda o componente material para pó de ônix negro (T$ 500). Em vez de um zumbi ou esqueleto, cria uma sombra.")]).nivel === "veterano", "servo sombra veterano");
+  assert(servoMortoVivo([e("Em vez de um zumbi ou esqueleto, cria uma múmia.")]).tipos.includes("destruidor"), "múmia mestre pode destruidor");
+  assert(servosInvisiveis([e("aumenta o número de servos conjurados em 1.", 2)]).quantidade === 5, "5 servos");
+  assert(legiao([e("aumenta o número de alvos em +1.", 3)]).alvos === 13, "legião 13 alvos");
+  console.log("regras.mjs: 53 casos OK");
 }
