@@ -50,6 +50,104 @@ export function espiritoBalistico(onUseEffects = [], { circuloMax = 1, tipoEleme
   return { quantidade, formula: `${dados}${dado}+1`, tipo, dados };
 }
 
+// ─── Conjurar Monstro (LB p. 186) e Conjurar Mortos-Vivos (LB p. 186 + AdA) ──────────────────
+// Os aprimoramentos chegam pelo texto (flags.tormenta20.onUseEffects[].description = nome do efeito
+// no item da magia). Casa por trecho sem acento, pra valer com a ficha do compêndio e com edições.
+const sem = (s) => String(s ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+const vezes = (aprs, trecho) => aprs.filter((e) => sem(e.description).includes(trecho))
+  .reduce((s, e) => s + (Number(e.qty) || 1), 0);
+const achar = (aprs, trecho) => aprs.filter((e) => sem(e.description).includes(trecho));
+
+export const TAMANHOS = ["peq", "med", "gra", "eno", "col"];   // categoria a partir de Pequeno
+export const LADO_TOKEN = { peq: 1, med: 1, gra: 2, eno: 3, col: 6 };   // quadrados de 1,5 m
+const NOME_TAMANHO = { medio: "med", grande: "gra", enorme: "eno", colossal: "col" };
+
+/** Valores do Livro Básico, pra quando o texto do aprimoramento não der pra ler. */
+const MONSTRO_LIVRO = {
+  peq: { for: 2, des: 3, pv: 20, desl: 9, dano: "2d4+2", alcance: 1.5 },
+  med: { for: 4, des: 3, pv: 45, desl: 12, dano: "2d6+4", alcance: 1.5 },
+  gra: { for: 7, des: 2, pv: 75, desl: 12, dano: "3d6+7", alcance: 3 },
+  eno: { for: 11, des: 1, pv: 110, desl: 15, dano: "4d6+11", alcance: 4.5 },
+  col: { for: 15, des: 0, pv: 180, desl: 15, dano: "6d6+15", alcance: 9 },
+};
+
+/** "Ele tem For 7, Des 2, 75 PV, deslocamento 12m e seu ataque causa 4d6+10 pontos de dano com 3m
+ * de alcance." Texto antigo do livro ("For 24, Des 14") é escala 10–20: vira modificador. */
+export function lerTamanho(texto) {
+  const t = sem(texto);
+  const tam = NOME_TAMANHO[/tamanho do monstro para (\w+)/.exec(t)?.[1]];
+  if (!tam) return null;
+  const m = /for (\d+), des (\d+), (\d+) pv, deslocamento (\d+)\s*m e seu ataque causa (\d+d\d+(?:\s*\+\s*\d+)?)(?: pontos de dano)?(?: com ([\d,.]+)\s*m de alcance)?/.exec(t);
+  if (!m) return { tamanho: tam, ...MONSTRO_LIVRO[tam] };
+  let [, f, d, pv, desl, dano, alc] = m;
+  [f, d] = [Number(f), Number(d)];
+  if (d >= 10) [f, d] = [Math.floor((f - 10) / 2), Math.floor((d - 10) / 2)];
+  return { tamanho: tam, for: f, des: d, pv: Number(pv), desl: Number(desl), dano: dano.replace(/\s+/g, ""),
+    alcance: alc ? Number(alc.replace(",", ".")) : MONSTRO_LIVRO[tam].alcance };
+}
+
+/** O que perguntar ao jogador antes de invocar (cada um só se o aprimoramento foi marcado). */
+export function perguntasMonstro(aprs = []) {
+  return {
+    elemental: vezes(aprs, "muda o tipo de dano do ataque") > 0,
+    escaladaOuNatacao: vezes(aprs, "escalada ou natacao") > 0,
+    resistencias: vezes(aprs, "resistencia 5 contra dois tipos") > 0,
+    imunidades: vezes(aprs, "imunidade contra dois tipos") > 0,
+  };
+}
+
+/**
+ * @param {{description:string, qty:number}[]} aprs  aprimoramentos marcados no card
+ * @param {{tipoDano?:string, escaladaOuNatacao?:"climb"|"swim", resistencias?:string[], imunidades?:string[]}} escolhas
+ */
+export function conjurarMonstro(aprs = [], escolhas = {}) {
+  // o maior tamanho marcado vence (o diálogo deixa marcar mais de um)
+  const tamanhos = achar(aprs, "tamanho do monstro para").map((e) => lerTamanho(e.description)).filter(Boolean);
+  const t = tamanhos.sort((a, b) => TAMANHOS.indexOf(b.tamanho) - TAMANHOS.indexOf(a.tamanho))[0]
+    ?? { tamanho: "peq", ...MONSTRO_LIVRO.peq };
+  const categoria = TAMANHOS.indexOf(t.tamanho) + 1;
+  const walk = t.desl + 3 * vezes(aprs, "aumenta o deslocamento do monstro");
+  const pv = t.pv + 10 * categoria * vezes(aprs, "aumenta os pv do monstro");
+  const desl = { walk, climb: 0, swim: 0, fly: 0 };
+  if (vezes(aprs, "escalada ou natacao")) desl[escolhas.escaladaOuNatacao === "swim" ? "swim" : "climb"] = walk;
+  if (vezes(aprs, "deslocamento de voo")) desl.fly = 2 * walk;
+  const tipo = escolhas.tipoDano || "corte";
+  return {
+    tamanho: t.tamanho, for: t.for, des: t.des, pv, desl,
+    ataque: { formula: t.dano, tipo, alcance: t.alcance },
+    sopro: vezes(aprs, "arma de sopro") > 0,
+    cegas: vezes(aprs, "percepcao as cegas") > 0,
+    resistencias: vezes(aprs, "resistencia 5 contra dois tipos") ? (escolhas.resistencias ?? []).slice(0, 2) : [],
+    imunidades: vezes(aprs, "imunidade contra dois tipos") ? (escolhas.imunidades ?? []).slice(0, 2) : [],
+  };
+}
+
+/** Os mortos-vivos da magia. Defesa null = "não têm valor de Defesa" (ataques acertam sempre). */
+export const MORTOS_VIVOS = {
+  esqueleto: { nome: "Esqueleto Conjurado", tamanho: "med", for: 2, des: 2, pv: 1, desl: { walk: 9 }, defesa: null,
+    danos: [{ formula: "1d6+2", tipo: "trevas" }] },
+  carnical: { nome: "Carniçal Conjurado", tamanho: "med", for: 3, des: 3, pv: 12, desl: { walk: 9 }, defesa: null,
+    danos: [{ formula: "1d8+3", tipo: "trevas" }, { formula: "1d8", tipo: "perda" }],
+    condicao: { nome: "Paralisado", status: "paralisado", rodadas: 1 },
+    texto: "Mais perda de 1d8 PV por veneno. Fortitude (CD da magia) ou fica paralisado por 1 rodada; quem passa fica imune à paralisia dos carniçais por 24 horas." },
+  sombra: { nome: "Sombra Conjurada", tamanho: "med", for: 2, des: 4, pv: 30, desl: { walk: 9 }, defesa: null, incorporeo: true,
+    danos: [{ formula: "1d10", tipo: "trevas" }, { formula: "1d10", tipo: "frio" }], perdaPM: "1d4",
+    texto: "Criaturas vivas atingidas: Fortitude (CD da magia) ou perdem 1d4 PM. Incorpórea; perde isso exposta à luz do sol." },
+  soterrado: { nome: "Soterrado Conjurado", tamanho: "med", for: 2, des: 2, pv: 1, desl: { walk: 9 }, defesa: null,
+    danos: [{ formula: "1d6+2", tipo: "frio" }], condicao: { nome: "Enredado", status: "enredado", rodadas: 1 },
+    texto: "Fortitude (CD da magia) ou fica enredado por 1 rodada." },
+  furia: { nome: "Fúria de Tauron", tamanho: "peq", for: 2, des: 5, pv: 1, desl: { walk: 9, fly: 12 }, defesa: 18, incorporeo: true,
+    danos: [{ formula: "1d6", tipo: "trevas" }, { formula: "1d6", tipo: "fogo" }],
+    condicao: { nome: "Em Chamas", status: "emchamas", rodadas: 0 },
+    texto: "Criaturas vivas atingidas ficam desprevenidas por 1 rodada e em chamas (Fortitude, CD da magia, evita)." },
+};
+
+export function conjurarMortosVivos(aprs = []) {
+  const tipo = vezes(aprs, "conjura sombras") ? "sombra" : vezes(aprs, "conjura carnicais") ? "carnical"
+    : vezes(aprs, "furias de tauron") ? "furia" : vezes(aprs, "conjura soterrados") ? "soterrado" : "esqueleto";
+  return { tipo, quantidade: 6 + vezes(aprs, "aumenta o numero de mortos-vivos"), ...MORTOS_VIVOS[tipo] };
+}
+
 if (typeof process !== "undefined" && process.argv?.[1]?.endsWith("regras.mjs") && process.argv.includes("--check")) {
   const assert = (c, m) => { if (!c) { console.error("FALHOU:", m); process.exit(1); } };
   const e = (description, qty = 1) => ({ description, qty });
@@ -72,5 +170,38 @@ if (typeof process !== "undefined" && process.argv?.[1]?.endsWith("regras.mjs") 
   assert(formulaDoRoll([d(5, 6), op("+"), n(1), op("+"), n(5)]) === "5d6+6", "dados + fixos somados");
   assert(formulaDoRoll([d(1, 8), op("+"), n(1), op("-"), n(3)]) === "1d8-2", "subtração");
   assert(formulaDoRoll([n(4)]) === null, "sem dado devolve null");
-  console.log("regras.mjs: 11 casos OK");
+
+  // Conjurar Monstro — textos como estão no compêndio do sistema e no Livro Básico
+  const GRANDE = "aumenta o tamanho do monstro para Grande. Ele tem For 7, Des 2, 75 PV, deslocamento 12m e seu ataque causa 4d6+10 pontos de dano com 3m de alcance. Requer 2º círculo.";
+  const GRANDE_LIVRO = "aumenta o tamanho do monstro para Grande. Ele tem For 24, Des 14, 75 PV, deslocamento 12m e seu ataque causa 3d6+7 pontos de dano com 3m de alcance.";
+  const MEDIO = "aumenta o tamanho do monstro para Médio. Ele tem For 4, Des 3, 45 PV, deslocamento 12m e seu ataque causa 2d6+6 pontos de dano.";
+  let m = conjurarMonstro([]);
+  assert(m.tamanho === "peq" && m.pv === 20 && m.for === 2 && m.des === 3 && m.desl.walk === 9 && m.ataque.formula === "2d4+2", "monstro base");
+  m = conjurarMonstro([e(GRANDE)]);
+  assert(m.tamanho === "gra" && m.for === 7 && m.pv === 75 && m.ataque.formula === "4d6+10" && m.ataque.alcance === 3, "Grande do compêndio");
+  m = conjurarMonstro([e(GRANDE_LIVRO)]);
+  assert(m.for === 7 && m.des === 2 && m.ataque.formula === "3d6+7", "Grande do livro: For 24/Des 14 vira 7/2");
+  m = conjurarMonstro([e(MEDIO), e(GRANDE)]);
+  assert(m.tamanho === "gra", "o maior tamanho vence");
+  m = conjurarMonstro([e(MEDIO), e("aumenta os PV do monstro em +10 para cada categoria de tamanho", 2), e("aumenta o deslocamento do monstro em +3m.", 2)]);
+  assert(m.pv === 45 + 2 * 20 && m.desl.walk === 18, "PV +20 por vez no Médio, deslocamento +3m ×2");
+  assert(m.ataque.alcance === 1.5, "Médio sem alcance no texto = corpo a corpo");
+  m = conjurarMonstro([e("o monstro ganha deslocamento de escalada ou natação igual ao seu deslocamento terrestre."), e("o monstro ganha deslocamento de voo igual ao dobro do deslocamento.")], { escaladaOuNatacao: "swim" });
+  assert(m.desl.swim === 9 && m.desl.climb === 0 && m.desl.fly === 18, "natação = terrestre, voo = dobro");
+  m = conjurarMonstro([e("muda o tipo de dano do ataque do monstro para ácido, fogo, frio ou eletricidade."), e("o monstro ganha resistência 5 contra dois tipos de dano"), e("o monstro ganha uma nova ordem: Arma de Sopro.")],
+    { tipoDano: "fogo", resistencias: ["corte", "frio", "fogo"] });
+  assert(m.ataque.tipo === "fogo" && m.resistencias.join() === "corte,frio" && m.sopro && !m.cegas, "tipo elemental, só 2 resistências, sopro");
+  assert(conjurarMonstro([], { resistencias: ["corte"] }).resistencias.length === 0, "resistência só com o aprimoramento");
+  const p = perguntasMonstro([e("muda o tipo de dano do ataque do monstro"), e("imunidade contra dois tipos de dano")]);
+  assert(p.elemental && p.imunidades && !p.resistencias && !p.escaladaOuNatacao, "perguntas só do que foi marcado");
+
+  // Conjurar Mortos-Vivos
+  let mv = conjurarMortosVivos([]);
+  assert(mv.tipo === "esqueleto" && mv.quantidade === 6 && mv.pv === 1 && mv.danos[0].formula === "1d6+2", "6 esqueletos");
+  mv = conjurarMortosVivos([e("aumenta o número de mortos-vivos conjurados em +1.", 3), e("em vez de esqueletos, conjura carniçais. Requer 3º círculo.")]);
+  assert(mv.tipo === "carnical" && mv.quantidade === 9 && mv.pv === 12 && mv.danos[0].formula === "1d8+3", "9 carniçais (livro: 12 PV, 1d8+3)");
+  mv = conjurarMortosVivos([e("em vez de esqueletos, conjura sombras. Requer 4º círculo.")]);
+  assert(mv.tipo === "sombra" && mv.pv === 30 && mv.incorporeo && mv.danos.map((d) => d.tipo).join() === "trevas,frio", "sombra (livro: 30 PV, trevas + frio)");
+  assert(conjurarMortosVivos([e("Em vez de esqueletos, conjura fúrias de Tauron.")]).defesa === 18, "fúria de Tauron (AdA)");
+  console.log("regras.mjs: 27 casos OK");
 }
